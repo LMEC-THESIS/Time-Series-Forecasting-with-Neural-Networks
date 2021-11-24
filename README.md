@@ -17,7 +17,7 @@ The __financial_time_series.py__ scripts loads a series of daily trading volume 
 Finally, the __control_time_series.py__ script provides a control time series to check performance against. This is a dataset on daily visits to a [statistical forecasting website](https://people.duke.edu/~rnau/411home.htm) from September 14, 2014 to August 19, 2020. The dependent variable is "Daily Visits", while the regressors are "Unique Visits", "First Time Visits" and "Returning Visits". 
 [Data Source: Kaggle](https://www.kaggle.com/bobnau/daily-website-visitors)
 
-The full output is available on [Google Drive](https://drive.google.com/drive/folders/1qKfEdbrJvsy0zYAFOuwb3FWuDVsuvFIe). Results may vary when scripts are run on machines with different CPUs, but within-machine consistency is assured by setting a random seed within each function.
+The __full output__ is available on [Google Drive](https://drive.google.com/drive/folders/1qKfEdbrJvsy0zYAFOuwb3FWuDVsuvFIe). Results may vary when scripts are run on machines with different CPUs, but within-machine consistency is assured by setting a random seed within each function.
 
 The same analyses can be run on *any series* of choice, simply by importing the master files and calling the required functions. 
 
