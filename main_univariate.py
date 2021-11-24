@@ -3,7 +3,7 @@
 ## UNCOMMENT IF SOME PACKAGES ARE MISSING ##
 # import subprocess
 # import sys
-# list_of_packages=['datetime','h5py','keras','matplotlib','numpy','pandas','pathlib','pmdarima','prettytable','python-math','python-time', 'requests','scikit-learn', 'sktime', 'statistics', 'tensorflow','seaborn','zipfile','yfinance']
+# list_of_packages=['datetime','h5py','keras','matplotlib','numpy','pandas','pathlib','pmdarima','prettytable','python-math','python-time', 'requests','scikit-learn', 'scipy', 'sktime', 'statistics', 'tensorflow','seaborn','zipfile','yfinance']
 # def install(package):
 #     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 # for package in list_of_packages:
@@ -140,7 +140,7 @@ def data_analysis_univariate(df, parent_folder, series_name):
     def adfuller_test(series, signif=0.05, name='', verbose=False):
         """Perform ADFuller to test for Stationarity of given series and print report"""
         description = []
-        r = adfuller(series, autolag='AIC')
+        r = adfuller(series, autolag='AIC', regression='ct')
         output = {'test_statistic':round(r[0], 4), 'pvalue':round(r[1], 4), 'n_lags':round(r[2], 4), 'n_obs':r[3]}
         p_value = output['pvalue'] 
         def adjust(val, length= 6): return str(val).ljust(length)
@@ -214,8 +214,6 @@ def arima(df, parent_folder, series_name):
     import matplotlib
     from matplotlib import pyplot as plt
     import matplotlib.dates as mdates
-    import seaborn as sns
-    sns.set(font_scale=0.8)
     import pmdarima as pm
     from statsmodels.tsa.arima.model import ARIMA, ARIMAResults
     from statsmodels.tsa.statespace.sarimax import SARIMAX
@@ -315,13 +313,19 @@ def arima(df, parent_folder, series_name):
     order = arima_model.get_params()['order']
     ##SAVE SUMMARY AND PLOT##
     Path(f"{univariate_tables}/ARIMA "+str(order)+" Output "+df.columns[0]+" Series.txt").write_text(str(arima_model.summary()))
-    arima_model.plot_diagnostics()
+    arima_model.plot_diagnostics(figsize=(8,6))
     plt.savefig(f"{univariate_arima}/ARIMA "+str(order)+" Model Plot Diagnostics "+df.columns[0]+".png", format="png")
     plt.close()
     ##PREDICT ON TRAINING SET##
-    arima_train_model=ARIMA(df_train, order=(order),enforce_stationarity=False)
+    arima_train_model=ARIMA(df_train, order=(order))
     arima_train_fit=arima_train_model.fit()
     arima_forecasts_train=ARIMAResults.predict(arima_train_fit)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    arima_error_train = forecast_error(df_train,arima_forecasts_train)
     ##PREDICT ON TEST SET##
     train=df_train.values
     test=df_test.values
@@ -329,7 +333,7 @@ def arima(df, parent_folder, series_name):
     start = time()
     predictions = list()
     for t in range(len(test)):
-        model = ARIMA(endog, order=(order),enforce_stationarity=False)
+        model = ARIMA(endog, order=(order))
         model_fit = model.fit()
         output = model_fit.forecast()
         yhat = output[0]
@@ -344,6 +348,7 @@ def arima(df, parent_folder, series_name):
     ##PERFORMANCE METRICS##
     arima_metrics_train=performance_metrics_calculator(df_train.to_numpy(), arima_forecasts_train.to_numpy())
     arima_metrics_test=performance_metrics_calculator(df_test.to_numpy(), arima_forecasts_test.to_numpy())
+    arima_error_test = forecast_error(df_test,arima_forecasts_test)
     ##CREATE TABLE##
     arima_train_table=performance_table(df, arima_metrics_train,  path_name=univariate_tables, name='ARIMA  '+str(order)+" In-Sample")
     arima_test_table=performance_table(df, arima_metrics_test,  path_name=univariate_tables, name='ARIMA  '+str(order)+" Out-of-Sample")
@@ -383,6 +388,7 @@ def arima(df, parent_folder, series_name):
         univariate_baseline_table_test.add_row([performance_metrics[i],baseline_metrics_test[i], arima_metrics_test[i]])
     Path(f"{univariate_tables}/Univariate Out-of-Sample Baseline Models Performance.txt").write_text(str(univariate_baseline_table_test))
     print(univariate_baseline_table_test)
+    return arima_error_train, arima_error_test
 #####################################################################################################################################
 #####################################           UNIVARIATE SCRIPT (NEURAL NETWORKS)    ##############################################
 ##FEED FORWARD NEURAL NETWORK (FFNN)##
@@ -588,7 +594,7 @@ def ffnn_univariate(df, parent_folder, series_name, L, ffnn_nodes1, ffnn_nodes2,
         plt.ylabel('MSE Loss')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training Loss vs. Validation Loss ("+df.columns[0]+" Series).png", format="png")
-    ffnn_loss_plot_univariate=loss_plot(df, ffnn_fit, path_name=univariate_ffnn, name="FFNN")
+    loss_plot(df, ffnn_fit, path_name=univariate_ffnn, name="FFNN")
     ##EVALUATE TRAINING AND VALIDATION MAE##
     def mae_plot(df, model, path_name, name=''):
         """Plot Neural Network Training Mean Absolute Error (MAE) against Validation and save figure to specified path"""
@@ -600,7 +606,7 @@ def ffnn_univariate(df, parent_folder, series_name, L, ffnn_nodes1, ffnn_nodes2,
         plt.title(name+' Training MAE vs. Validation MAE')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training MAE vs. Validation MAE ("+df.columns[0]+" Series).png", format="png")
-    ffnn_mae_plot_univariate=mae_plot(df, ffnn_fit, path_name=univariate_ffnn, name='FFNN')
+    mae_plot(df, ffnn_fit, path_name=univariate_ffnn, name='FFNN')
     ##LOAD BEST MODEL##
     ffnn_best_model=load_model(f"{univariate_models}/ffnn_best_model.h5")
     ##SAVE MODEL SUMMARY##
@@ -620,6 +626,13 @@ def ffnn_univariate(df, parent_folder, series_name, L, ffnn_nodes1, ffnn_nodes2,
     df_test_for_plotting=df_test.iloc[L:,:]
     ffnn_train_predict_inv=pd.DataFrame(ffnn_train_predict_inv, index=df_train_for_plotting.index)
     ffnn_test_predict_inv=pd.DataFrame(ffnn_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    ffnn_error_train = forecast_error(df_train_for_plotting,ffnn_train_predict_inv)
+    ffnn_error_test = forecast_error(df_test_for_plotting, ffnn_test_predict_inv)
     ##COMPUTE PERFORMANCE METRICS##
     ffnn_metrics_train=performance_metrics_calculator(df_train_for_plotting.to_numpy(), ffnn_train_predict_inv.to_numpy())
     ffnn_metrics_test=performance_metrics_calculator(df_test_for_plotting.to_numpy(), ffnn_test_predict_inv.to_numpy())
@@ -639,7 +652,7 @@ def ffnn_univariate(df, parent_folder, series_name, L, ffnn_nodes1, ffnn_nodes2,
     plt.close('all')
     ##RETRIEVE NUMBER OF LAYERS##
     ffnn_layers = len(ffnn_model.layers)
-    return univariate_ffnn_training_time, ffnn_metrics_train, ffnn_metrics_test, ffnn_layers
+    return univariate_ffnn_training_time, ffnn_metrics_train, ffnn_metrics_test, ffnn_layers, ffnn_error_train, ffnn_error_test
 ##RECURRENT NEURAL NETWORK (RNN)##
 def rnn_univariate(df, parent_folder, series_name, L, rnn_nodes1, rnn_nodes2, rnn_epochs, rnn_batch, rnn_optimizer, T=1):
     ##SET SEED TO ENSURE REPRODUCIBILITY##
@@ -881,6 +894,13 @@ def rnn_univariate(df, parent_folder, series_name, L, rnn_nodes1, rnn_nodes2, rn
     df_test_for_plotting=df_test.iloc[L:,:]
     rnn_train_predict_inv=pd.DataFrame(rnn_train_predict_inv, index=df_train_for_plotting.index)
     rnn_test_predict_inv=pd.DataFrame(rnn_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    rnn_error_train = forecast_error(df_train_for_plotting,rnn_train_predict_inv)
+    rnn_error_test = forecast_error(df_test_for_plotting, rnn_test_predict_inv)
     ##PERFORMANCE METRICS##
     rnn_metrics_train=performance_metrics_calculator(df_train_for_plotting.to_numpy(), rnn_train_predict_inv.to_numpy())
     rnn_metrics_test=performance_metrics_calculator(df_test_for_plotting.to_numpy(), rnn_test_predict_inv.to_numpy())
@@ -903,7 +923,7 @@ def rnn_univariate(df, parent_folder, series_name, L, rnn_nodes1, rnn_nodes2, rn
     plt.close('all')
     ##RETRIEVE NUMBER OF LAYERS##
     rnn_layers = len(rnn_model.layers)
-    return univariate_rnn_training_time, rnn_metrics_train, rnn_metrics_test, rnn_layers
+    return univariate_rnn_training_time, rnn_metrics_train, rnn_metrics_test, rnn_layers, rnn_error_train, rnn_error_test
 ##LONG SHORT-TERM MEMORY (LSTM)##
 def lstm_univariate(df, parent_folder, series_name, L, lstm_nodes1, lstm_nodes2, lstm_epochs, lstm_batch, lstm_optimizer, T=1):
     ##SET SEED TO ENSURE REPRODUCIBILITY##
@@ -1143,6 +1163,13 @@ def lstm_univariate(df, parent_folder, series_name, L, lstm_nodes1, lstm_nodes2,
     df_test_for_plotting=df_test.iloc[L:,:]
     lstm_train_predict_inv=pd.DataFrame(lstm_train_predict_inv, index=df_train_for_plotting.index)
     lstm_test_predict_inv=pd.DataFrame(lstm_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    lstm_error_train = forecast_error(df_train_for_plotting, lstm_train_predict_inv)
+    lstm_error_test = forecast_error(df_test_for_plotting, lstm_test_predict_inv)
     ##PERFORMANCE METRICS##
     lstm_metrics_train=performance_metrics_calculator(df_train_for_plotting.to_numpy(), lstm_train_predict_inv.to_numpy())
     lstm_metrics_test=performance_metrics_calculator(df_test_for_plotting.to_numpy(), lstm_test_predict_inv.to_numpy())
@@ -1165,7 +1192,7 @@ def lstm_univariate(df, parent_folder, series_name, L, lstm_nodes1, lstm_nodes2,
     plt.close('all')
     ##RETRIEVE NUMBER OF LAYERS##
     lstm_layers = len(lstm_model.layers)
-    return univariate_lstm_training_time, lstm_metrics_train, lstm_metrics_test, lstm_layers
+    return univariate_lstm_training_time, lstm_metrics_train, lstm_metrics_test, lstm_layers, lstm_error_train, lstm_error_test
 ##GATED RECURRENT UNIT (GRU)##
 def gru_univariate(df, parent_folder, series_name, L, gru_nodes1, gru_nodes2, gru_epochs, gru_batch, gru_optimizer, T=1):
     ##SET SEED TO ENSURE REPRODUCIBILITY##
@@ -1405,6 +1432,13 @@ def gru_univariate(df, parent_folder, series_name, L, gru_nodes1, gru_nodes2, gr
     df_test_for_plotting=df_test.iloc[L:,:]
     gru_train_predict_inv=pd.DataFrame(gru_train_predict_inv, index=df_train_for_plotting.index)
     gru_test_predict_inv=pd.DataFrame(gru_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    gru_error_train = forecast_error(df_train_for_plotting,gru_train_predict_inv)
+    gru_error_test = forecast_error(df_test_for_plotting, gru_test_predict_inv)
     ##PERFORMANCE METRICS##
     gru_metrics_train=performance_metrics_calculator(df_train_for_plotting.to_numpy(), gru_train_predict_inv.to_numpy())
     gru_metrics_test=performance_metrics_calculator(df_test_for_plotting.to_numpy(), gru_test_predict_inv.to_numpy())
@@ -1427,7 +1461,7 @@ def gru_univariate(df, parent_folder, series_name, L, gru_nodes1, gru_nodes2, gr
     plt.close('all')
     ##RETRIEVE NUMBER OF LAYERS##
     gru_layers = len(gru_model.layers)
-    return univariate_gru_training_time, gru_metrics_train, gru_metrics_test, gru_layers
+    return univariate_gru_training_time, gru_metrics_train, gru_metrics_test, gru_layers, gru_error_train, gru_error_test
 ##CONVOLUTIONAL NEURAL NETWORK (CNN)##
 def cnn_univariate(df, parent_folder, series_name, L, cnn_filters_1, cnn_filters_2, cnn_dense_nodes, cnn_epochs, cnn_batch, cnn_optimizer, cnn_kernel_1=3, cnn_kernel_2=3, cnn_pool_size=2, T=1):
     ##SET SEED TO ENSURE REPRODUCIBILITY##
@@ -1677,6 +1711,13 @@ def cnn_univariate(df, parent_folder, series_name, L, cnn_filters_1, cnn_filters
     df_test_for_plotting=df_test.iloc[L:,:]
     cnn_train_predict_inv=pd.DataFrame(cnn_train_predict_inv, index=df_train_for_plotting.index)
     cnn_test_predict_inv=pd.DataFrame(cnn_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    cnn_error_train = forecast_error(df_train_for_plotting,cnn_train_predict_inv)
+    cnn_error_test = forecast_error(df_test_for_plotting, cnn_test_predict_inv)
     ##PERFORMANCE METRICS##
     cnn_metrics_train=performance_metrics_calculator(df_train_for_plotting.to_numpy(), cnn_train_predict_inv.to_numpy())
     cnn_metrics_test=performance_metrics_calculator(df_test_for_plotting.to_numpy(), cnn_test_predict_inv.to_numpy())
@@ -1699,7 +1740,7 @@ def cnn_univariate(df, parent_folder, series_name, L, cnn_filters_1, cnn_filters
     plt.close('all')
     ##RETRIEVE NUMBER OF LAYERS##
     cnn_layers = len(cnn_model.layers)
-    return univariate_cnn_training_time, cnn_metrics_train, cnn_metrics_test, cnn_layers
+    return univariate_cnn_training_time, cnn_metrics_train, cnn_metrics_test, cnn_layers, cnn_error_train, cnn_error_test
 #####################################################################################################################################
 ####################################              CREATE UNIVARIATE TABLES              #############################################
 def univariate_tables(df, univariate_ffnn_training_time, univariate_rnn_training_time, univariate_lstm_training_time, univariate_gru_training_time, univariate_cnn_training_time,
@@ -1747,6 +1788,68 @@ def univariate_tables(df, univariate_ffnn_training_time, univariate_rnn_training
         univariate_table_test.add_row([performance_metrics[i],ffnn_metrics_test[i],rnn_metrics_test[i],lstm_metrics_test[i],gru_metrics_test[i],cnn_metrics_test[i]])
     Path(f"{univariate_tables}/Univariate Out-of-Sample Model Performance.txt").write_text(str(univariate_table_test))
     print(univariate_table_test)
+#####################################################################################################################################
+####################################            STATISTICAL SIGNIFICANCE TEST           #############################################
+def diebold_mariano_test(parent_folder, series_name, L_ffnn,L_rnn,L_lstm,L_gru,L_cnn, arima_error_train, arima_error_test, ffnn_error_train,ffnn_error_test,
+                         rnn_error_train,rnn_error_test,lstm_error_train,lstm_error_test,gru_error_train,gru_error_test,
+                         cnn_error_train,cnn_error_test):
+    import os
+    import pathlib
+    from pathlib import Path
+    from dm_test import dm_test
+    project_path = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project'
+    parent_folder = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder
+    series_path = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder / series_name
+    neural_network_folder = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder / series_name / 'Neural Networks'
+    univariate_folder = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder / series_name / 'Neural Networks/Univariate'
+    diebold_mariano_test_folder = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder / series_name / 'Neural Networks/Univariate/Diebold-Mariano Test'
+    list_of_folders=[project_path,parent_folder,series_path,neural_network_folder,univariate_folder, diebold_mariano_test_folder]
+    for folder in list_of_folders:
+        if not os.path.exists(folder):
+            os.mkdir(folder)
+    from matplotlib import pyplot as plt
+    models=['FFNN','RNN', 'LSTM', 'GRU', 'CNN']
+    in_sample_nn=[ffnn_error_train,rnn_error_train,lstm_error_train,gru_error_train,cnn_error_train]
+    out_sample_nn=[ffnn_error_test,rnn_error_test,lstm_error_test,gru_error_test,cnn_error_test]
+    window_size=[L_ffnn,L_rnn,L_lstm,L_gru,L_cnn]
+    ##IN-SAMPLE##
+    in_sample_dm=[]
+    in_sample_pval=[]
+    for nn_pred_in, L in zip(in_sample_nn, window_size):
+        dm_stat, dm_pval = dm_test(arima_error_train[L:],nn_pred_in, h=1)
+        in_sample_dm.append(dm_stat)
+        in_sample_pval.append(dm_pval)
+    with open(f"{diebold_mariano_test_folder}/Diebold-Mariano Test Output (In-Sample).txt", 'w') as f:
+        f.write("Baseline Comparison: ARIMA Model\n")
+        for model, dm, pval in zip(models, in_sample_dm, in_sample_pval):
+            f.write("%s Model --> Diebold-Mariano Statistic: %f --> p-value: %f\n" % (model, dm, pval))
+    ##PLOT LOSS DIFFERENTIALS##
+    for nn_pred_in, L, model in zip(in_sample_nn, window_size, models):
+        plt.figure()
+        plt.plot(numpy.subtract(arima_error_train[L:],nn_pred_in))
+        plt.title('In-sample Loss Differentials Plots')
+        plt.ylabel('Loss Differential (ARIMA - '+model+')')
+        plt.xlabel('Observation')
+        plt.savefig(f"{diebold_mariano_test_folder}/In-sample Loss Differential Plot (ARIMA - "+model+").png")
+    ##OUT-OF-SAMPLE##
+    out_sample_dm=[]
+    out_sample_pval=[]
+    for nn_pred_out, L in zip(out_sample_nn, window_size):
+        dm_stat, dm_pval = dm_test(arima_error_test[L:],nn_pred_out, h=1)
+        out_sample_dm.append(dm_stat)
+        out_sample_pval.append(dm_pval)
+    with open(f"{diebold_mariano_test_folder}/Diebold-Mariano Test Output (Out-of-Sample).txt", 'w') as f:
+        f.write("Baseline Comparison: ARIMA Model\n")
+        for model, dm, pval in zip(models, out_sample_dm, out_sample_pval):
+            f.write("%s Model --> Diebold-Mariano Statistic: %f --> p-value: %f\n" % (model, dm, pval))
+    ##PLOT LOSS DIFFERENTIALS##
+    for nn_pred_out, L, model in zip(out_sample_nn, window_size, models):
+        plt.figure()
+        plt.plot(numpy.subtract(arima_error_test[L:],nn_pred_out))
+        plt.title('Out-of-sample Loss Differentials Plots')
+        plt.ylabel('Loss Differential (ARIMA - '+model+')')
+        plt.xlabel('Observation')
+        plt.savefig(f"{diebold_mariano_test_folder}/Out-of-sample Loss Differential Plot (ARIMA - "+model+").png")
 #####################################################################################################################################
 ####################################               GRID SEARCH FUNCTIONS                #############################################
 ##FEED FORWARD NEURAL NETWORK (FFNN)##

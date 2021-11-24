@@ -47,7 +47,7 @@ df_univariate=df_multivariate[output_variable].to_frame()
 #####################################################################################################################################
 ######################################   GRID SEARCH TO DETERMINE BEST PARAMETER CONFIGURATIONS     #################################
 #####################################################################################################################################
-#############################################       LIST OF PARAMETERS           ####################################################
+#############################################           PARAMETER GRID           ####################################################
 lags = [5, 10, 30]                  # use higher values ONLY for larger datasets (e.g. > 1000 observations in the test set)
 nodes1 = [10, 50, 100, 200]
 nodes2 = [10, 50, 100, 200]
@@ -80,25 +80,26 @@ cnn_nodes = [10, 50, 100, 200]
 ##DATA ANALYSIS##
 main_univariate.data_analysis_univariate(df_univariate, parent_folder=parent_folder, series_name=series_name)
 ##ARIMA##
-main_univariate.arima(df_univariate, parent_folder=parent_folder, series_name=series_name)
+arima_error_train_univariate, arima_error_test_univariate = main_univariate.arima(
+df_univariate, parent_folder=parent_folder, series_name=series_name)
 ##FEED FORWARD NEURAL NETWORK (FFNN)##
-univariate_ffnn_training_time, ffnn_metrics_train, ffnn_metrics_test, ffnn_layers = main_univariate.ffnn_univariate(
+univariate_ffnn_training_time, ffnn_metrics_train, ffnn_metrics_test, ffnn_layers, ffnn_error_train_univariate, ffnn_error_test_univariate = main_univariate.ffnn_univariate(
 df_univariate, parent_folder=parent_folder, series_name=series_name, L=30, T=1,
 ffnn_nodes1=200, ffnn_nodes2=200, ffnn_epochs=500, ffnn_batch=32, ffnn_optimizer='adam')
 ##RECURRENT NEURAL NETWORK (RNN)##
-univariate_rnn_training_time, rnn_metrics_train, rnn_metrics_test, rnn_layers = main_univariate.rnn_univariate(
+univariate_rnn_training_time, rnn_metrics_train, rnn_metrics_test, rnn_layers, rnn_error_train_univariate, rnn_error_test_univariate = main_univariate.rnn_univariate(
 df_univariate, parent_folder=parent_folder, series_name=series_name, L=30, T=1,
 rnn_nodes1=200, rnn_nodes2=100, rnn_epochs=500, rnn_batch=128, rnn_optimizer='adam')
 ##LONG SHORT-TERM MEMORY (LSTM)##
-univariate_lstm_training_time, lstm_metrics_train, lstm_metrics_test, lstm_layers = main_univariate.lstm_univariate(
+univariate_lstm_training_time, lstm_metrics_train, lstm_metrics_test, lstm_layers, lstm_error_train_univariate, lstm_error_test_univariate = main_univariate.lstm_univariate(
 df_univariate, parent_folder=parent_folder, series_name=series_name, L=30, T=1, 
 lstm_nodes1=200, lstm_nodes2=200, lstm_epochs=500, lstm_batch=64, lstm_optimizer='adam')
 ##GATED RECURRENT UNIT (GRU)##
-univariate_gru_training_time, gru_metrics_train, gru_metrics_test, gru_layers = main_univariate.gru_univariate(
+univariate_gru_training_time, gru_metrics_train, gru_metrics_test, gru_layers, gru_error_train_univariate, gru_error_test_univariate = main_univariate.gru_univariate(
 df_univariate, parent_folder=parent_folder, series_name=series_name, L=30, T=1,
 gru_nodes1=100, gru_nodes2=100, gru_epochs=500, gru_batch=128, gru_optimizer='adam')
 ##CONVOLUTIONAL NEURAL NETWORK (CNN)##
-univariate_cnn_training_time, cnn_metrics_train, cnn_metrics_test, cnn_layers = main_univariate.cnn_univariate(
+univariate_cnn_training_time, cnn_metrics_train, cnn_metrics_test, cnn_layers, cnn_error_train_univariate, cnn_error_test_univariate = main_univariate.cnn_univariate(
 df_univariate, parent_folder=parent_folder, series_name=series_name, L=30, T=1,
 cnn_filters_1=32, cnn_filters_2=32,cnn_kernel_1=2,cnn_kernel_2=2,cnn_dense_nodes=50,cnn_pool_size=2,cnn_epochs=500,cnn_batch=128,
 cnn_optimizer='adam')
@@ -109,6 +110,15 @@ main_univariate.univariate_tables(df_univariate, univariate_ffnn_training_time, 
                        ffnn_metrics_test, rnn_metrics_test, lstm_metrics_test, gru_metrics_test, cnn_metrics_test,
                        ffnn_layers, rnn_layers, lstm_layers, gru_layers, cnn_layers,
                        parent_folder=parent_folder, series_name=series_name)
+##STATISTICAL SIGNIFICANCE TEST##
+main_univariate.diebold_mariano_test(parent_folder=parent_folder, series_name=series_name,
+                                    L_ffnn=30, L_rnn=30, L_lstm=30, L_gru=30, L_cnn=30,
+                                    arima_error_train=arima_error_train_univariate, arima_error_test=arima_error_test_univariate, 
+                                    ffnn_error_train=ffnn_error_train_univariate, ffnn_error_test=ffnn_error_test_univariate, 
+                                    rnn_error_train=rnn_error_train_univariate, rnn_error_test=rnn_error_test_univariate, 
+                                    lstm_error_train=lstm_error_train_univariate, lstm_error_test=lstm_error_test_univariate, 
+                                    gru_error_train=gru_error_train_univariate, gru_error_test=gru_error_test_univariate, 
+                                    cnn_error_train=cnn_error_train_univariate,cnn_error_test=cnn_error_test_univariate)
 #####################################################################################################################################
 ######################################                MULTIVARIATE ANALYSIS               #############################################
 #################################################################################################################################### 
@@ -136,34 +146,43 @@ main_univariate.univariate_tables(df_univariate, univariate_ffnn_training_time, 
 main_multivariate.data_analysis_multivariate(df_multivariate, parent_folder=parent_folder, 
 series_name=series_name, output_variable=output_variable)
 ##ARIMAX##
-main_multivariate.arimax(df_multivariate, parent_folder=parent_folder, 
+arima_error_train_multivariate, arima_error_test_multivariate = main_multivariate.arimax(df_multivariate, parent_folder=parent_folder, 
 output_variable=output_variable, series_name=series_name)
 ##FEED FORWARD NEURAL NETWORK (FFNN)##
-multivariate_ffnn_training_time, ffnn_metrics_train, ffnn_metrics_test, ffnn_layers = main_multivariate.ffnn_multivariate(
+multivariate_ffnn_training_time, ffnn_metrics_train, ffnn_metrics_test, ffnn_layers, ffnn_error_train_multivariate, ffnn_error_test_multivariate = main_multivariate.ffnn_multivariate(
 df_multivariate, parent_folder=parent_folder, series_name=series_name, 
 output_variable=output_variable, L=30, T=1, ffnn_nodes1=200, ffnn_nodes2=10, ffnn_epochs=500, ffnn_batch=32, ffnn_optimizer='adam')
 ##RECURRENT NEURAL NETWORK (RNN)##
-multivariate_rnn_training_time, rnn_metrics_train, rnn_metrics_test, rnn_layers = main_multivariate.rnn_multivariate(
+multivariate_rnn_training_time, rnn_metrics_train, rnn_metrics_test, rnn_layers, rnn_error_train_multivariate, rnn_error_test_multivariate = main_multivariate.rnn_multivariate(
 df_multivariate, parent_folder=parent_folder, series_name=series_name, 
 output_variable=output_variable, L=30, T=1, rnn_nodes1=200, rnn_nodes2=200, rnn_epochs=500, rnn_batch=64, rnn_optimizer='adam')
 ##LONG SHORT-TERM MEMORY (LSTM)##
-multivariate_lstm_training_time, lstm_metrics_train, lstm_metrics_test, lstm_layers = main_multivariate.lstm_multivariate(
+multivariate_lstm_training_time, lstm_metrics_train, lstm_metrics_test, lstm_layers, lstm_error_train_multivariate, lstm_error_test_multivariate = main_multivariate.lstm_multivariate(
 df_multivariate, parent_folder=parent_folder, series_name=series_name, 
 output_variable=output_variable, L=30, T=1, lstm_nodes1=50, lstm_nodes2=200, lstm_epochs=500, lstm_batch=32, lstm_optimizer='adam')
 ##GATED RECURRENT UNIT (GRU)##
-multivariate_gru_training_time, gru_metrics_train, gru_metrics_test, gru_layers = main_multivariate.gru_multivariate(
+multivariate_gru_training_time, gru_metrics_train, gru_metrics_test, gru_layers, gru_error_train_multivariate, gru_error_test_multivariate = main_multivariate.gru_multivariate(
 df_multivariate, parent_folder=parent_folder, series_name=series_name, 
 output_variable=output_variable, L=30, T=1, gru_nodes1=100, gru_nodes2=100, gru_epochs=500, gru_batch=256, gru_optimizer='adam')
 ##CONVOLUTIONAL NEURAL NETWORK (CNN)##
-multivariate_cnn_training_time, cnn_metrics_train, cnn_metrics_test, cnn_layers = main_multivariate.cnn_multivariate(
+multivariate_cnn_training_time, cnn_metrics_train, cnn_metrics_test, cnn_layers, cnn_error_train_multivariate, cnn_error_test_multivariate = main_multivariate.cnn_multivariate(
 df_multivariate, parent_folder=parent_folder, series_name=series_name, 
 output_variable=output_variable, L=30, T=1,cnn_filters_1=128, cnn_filters_2=128, cnn_kernel_1=3, cnn_kernel_2=3, 
 cnn_dense_nodes=50, cnn_pool_size=2, cnn_epochs=500, cnn_batch=256, cnn_optimizer='adam')
 ##PRINT MULTIVARIATE TABLES##
-main_multivariate.multivariate_tables(df_multivariate, multivariate_ffnn_training_time, multivariate_rnn_training_time, 
-                      multivariate_lstm_training_time, multivariate_gru_training_time, multivariate_cnn_training_time,
-                       ffnn_metrics_train, rnn_metrics_train, lstm_metrics_train, gru_metrics_train, cnn_metrics_train,
-                       ffnn_metrics_test, rnn_metrics_test, lstm_metrics_test, gru_metrics_test, cnn_metrics_test,
-                       ffnn_layers, rnn_layers, lstm_layers, gru_layers, cnn_layers,
-                       parent_folder=parent_folder, series_name=series_name)
+main_multivariate.multivariate_tables(multivariate_ffnn_training_time, multivariate_rnn_training_time, 
+                                     multivariate_lstm_training_time, multivariate_gru_training_time, multivariate_cnn_training_time,
+                                     ffnn_metrics_train, rnn_metrics_train, lstm_metrics_train, gru_metrics_train, cnn_metrics_train,
+                                     ffnn_metrics_test, rnn_metrics_test, lstm_metrics_test, gru_metrics_test, cnn_metrics_test,
+                                     ffnn_layers, rnn_layers, lstm_layers, gru_layers, cnn_layers,
+                                     parent_folder=parent_folder, series_name=series_name)
+##STATISTICAL SIGNIFICANCE TEST##
+main_multivariate.diebold_mariano_test(parent_folder=parent_folder, series_name=series_name,
+                                      L_ffnn=30, L_rnn=30, L_lstm=30, L_gru=30, L_cnn=30,
+                                      arima_error_train=arima_error_train_multivariate, arima_error_test=arima_error_test_multivariate, 
+                                      ffnn_error_train=ffnn_error_train_multivariate, ffnn_error_test=ffnn_error_test_multivariate, 
+                                      rnn_error_train=rnn_error_train_multivariate, rnn_error_test=rnn_error_test_multivariate, 
+                                      lstm_error_train=lstm_error_train_multivariate, lstm_error_test=lstm_error_test_multivariate, 
+                                      gru_error_train=gru_error_train_multivariate, gru_error_test=gru_error_test_multivariate, 
+                                      cnn_error_train=cnn_error_train_multivariate, cnn_error_test=cnn_error_test_multivariate)
 #####################################################################################################################################

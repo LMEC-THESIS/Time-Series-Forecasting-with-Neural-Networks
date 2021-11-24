@@ -3,7 +3,7 @@
 ## UNCOMMENT IF SOME PACKAGES ARE MISSING ##
 # import subprocess
 # import sys
-# list_of_packages=['datetime','h5py','keras','matplotlib','numpy','pandas','pathlib','pmdarima','prettytable','python-math','python-time', 'requests','scikit-learn', 'sktime', 'statistics', 'tensorflow','seaborn','zipfile','yfinance']
+# list_of_packages=['datetime','h5py','keras','matplotlib','numpy','pandas','pathlib','pmdarima','prettytable','python-math','python-time', 'requests','scikit-learn', 'scipy','sktime', 'statistics', 'tensorflow','seaborn','zipfile','yfinance']
 # def install(package):
 #     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 # for package in list_of_packages:
@@ -211,7 +211,7 @@ def data_analysis_multivariate(df, parent_folder, series_name, output_variable):
     def adfuller_test(series, signif=0.05, name='', verbose=False):
         """Perform ADFuller to test for Stationarity of given series and print report"""
         description = []
-        r = adfuller(series, autolag='AIC')
+        r = adfuller(series, autolag='AIC', regression='ct')
         output = {'test_statistic':round(r[0], 4), 'pvalue':round(r[1], 4), 'n_lags':round(r[2], 4), 'n_obs':r[3]}
         p_value = output['pvalue'] 
         def adjust(val, length= 6): return str(val).ljust(length)
@@ -311,19 +311,27 @@ def arimax(df, parent_folder, series_name, output_variable):
     ############################################    ARIMA MODEL     ############################################
     ##FIT ARIMA MODEL (WITH MODEL SELECTION CRITERIA)##
     start = time()
-    arima_model = pm.auto_arima(arima_train_endogenous, exogenous=arima_train_exogenous, start_p=1, start_q=1, test='adf', max_p=10, max_q=10,max_d=5,m=1,seasonal=False,start_P=0, D=0, trace=True, error_action='ignore', suppress_warnings=True, stepwise=True)
+    arima_model = pm.auto_arima(arima_train_endogenous, exogenous=arima_train_exogenous, start_p=1, start_q=1, test='adf', max_p=10, max_q=10, max_d=5, m=1,seasonal=False,start_P=0, D=0, trace=True, error_action='ignore', suppress_warnings=True, stepwise=True)
     multivariate_arima_training_time=time()-start
     ##SAVE OPTIMIZED ORDER##
     order = arima_model.get_params()['order']
     ##SAVE PLOTS AND SUMMARY##
     Path(f"{multivariate_tables}/ARIMAX "+str(order)+" Output "+output_variable+" Series.txt").write_text(str(arima_model.summary()))
-    arima_model.plot_diagnostics()
+    arima_model.plot_diagnostics(figsize=(8,6))
     plt.savefig(f"{multivariate_arima}/ARIMAX "+str(order)+" Model Plot Diagnostics "+output_variable+".png", format="png")
     plt.close()
     ##PREDICT ON TRAINING SET##
     arima_train_model=ARIMA(arima_train_endogenous, exog=arima_train_exogenous, order=(order))
     arima_train_fit=arima_train_model.fit()
     arima_forecasts_train=ARIMAResults.predict(arima_train_fit)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    arima_error_train = forecast_error(df_train[output_variable],arima_forecasts_train)
+    arima_error_train = numpy.stack(arima_error_train, axis=0)
+    arima_error_train = arima_error_train.reshape(arima_error_train.shape[0],1)
     ##PREDICT ON TEST SET##
     train_y=arima_train_endogenous.values.tolist()
     train_x=arima_train_exogenous.values.tolist()
@@ -346,6 +354,10 @@ def arimax(df, parent_folder, series_name, output_variable):
     multivariate_arima_training_test_time=multivariate_arima_training_time+multivariate_arima_test_time
     ##CONVERT TO DATAFRAME##
     arima_forecasts_test=pd.DataFrame(predictions, index=df_test.index)
+    ##COMPUTE FORECAST ERROR##
+    arima_error_test = forecast_error(df_test[output_variable],arima_forecasts_test)
+    arima_error_test = numpy.stack(arima_error_test, axis=0)
+    arima_error_test = arima_error_test.reshape(arima_error_test.shape[0],1)
     ##PERFORMANCE METRICS##
     from sklearn.metrics import mean_absolute_error
     from sklearn.metrics import mean_squared_error
@@ -377,8 +389,8 @@ def arimax(df, parent_folder, series_name, output_variable):
         Path(f"{path_name}/"+name+" Model Performance Metrics ("+series_name+" Series).txt").write_text(str(table))
         print(table)
         return table
-    arima_table_train=performance_table(df, arima_metrics_train, path_name=multivariate_tables, name='ARIMAX '+str(order)+' In-Sample Performance')
-    arima_table_test=performance_table(df, arima_metrics_test, path_name=multivariate_tables, name='ARIMAX '+str(order)+' Out-of-Sample Performance')
+    performance_table(df, arima_metrics_train, path_name=multivariate_tables, name='ARIMAX '+str(order)+' In-Sample Performance')
+    performance_table(df, arima_metrics_test, path_name=multivariate_tables, name='ARIMAX '+str(order)+' Out-of-Sample Performance')
     ##PLOT PERFORMANCE##
     from matplotlib.ticker import MaxNLocator
     def plot_performance(df, actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
@@ -445,6 +457,7 @@ def arimax(df, parent_folder, series_name, output_variable):
         multivariate_table_test.add_row([performance_metrics[i], arima_metrics_test[i]])
     Path(f"{multivariate_tables}/ARIMAX Out-of-Sample Model Performance.txt").write_text(str(multivariate_table_test))
     print(multivariate_table_test)
+    return arima_error_train, arima_error_test
 #####################################################################################################################################
 #####################################           MULTIVARIATE SCRIPT (NEURAL NETWORKS)    ##############################################
 #####################################################################################################################################
@@ -578,9 +591,9 @@ def ffnn_multivariate(df, parent_folder, series_name, output_variable, L, ffnn_n
     ffnn_fit=ffnn_model.fit(train_x, train_y, epochs=ffnn_epochs, batch_size=ffnn_batch, validation_split=0.2, verbose=2, callbacks=[ffnn_best_model])
     multivariate_ffnn_training_time=time()-start
     ##EVALUATE FIT DURING TRAINING##
-    def loss_plot(df, model,  path_name, name, output_variable=output_variable):
+    def loss_plot(model,  path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Loss against Validation Loss and save figure to specified path"""
-        fig=plt.figure()
+        plt.figure()
         plt.plot(model.history['loss'], label='Training loss')
         plt.plot(model.history['val_loss'], label='Validation loss')
         plt.title(name+' Training Loss vs. Validation Loss ('+output_variable+' Series)')
@@ -588,11 +601,11 @@ def ffnn_multivariate(df, parent_folder, series_name, output_variable, L, ffnn_n
         plt.ylabel('MSE Loss')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training Loss vs. Validation Loss ("+output_variable+" Series).png", format="png")
-    loss_plot(df, ffnn_fit, path_name=multivariate_ffnn, name="FFNN")
+    loss_plot(ffnn_fit, path_name=multivariate_ffnn, name="FFNN")
     ##EVALUATE TRAINING AND VALIDATION MAE##
-    def mae_plot(df, model, path_name, name, output_variable=output_variable):
+    def mae_plot(model, path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Mean Absolute Error (MAE) against Validation and save figure to specified path"""
-        fig=plt.figure()
+        plt.figure()
         plt.plot(model.history['mae'], label='Training MAE')
         plt.plot(model.history['val_mae'], label='Validation MAE')
         plt.xlabel('Epochs')
@@ -600,7 +613,7 @@ def ffnn_multivariate(df, parent_folder, series_name, output_variable, L, ffnn_n
         plt.title(name+' Training MAE vs. Validation MAE')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training MAE vs. Validation MAE ("+output_variable+" Series).png", format="png")
-    mae_plot(df, ffnn_fit, path_name=multivariate_ffnn, name='FFNN')
+    mae_plot(ffnn_fit, path_name=multivariate_ffnn, name='FFNN')
     ##LOAD BEST MODEL##
     ffnn_best_model=load_model(f"{multivariate_models}/ffnn_best_model.h5")
     ##SAVE MODEL SUMMARY##
@@ -638,7 +651,7 @@ def ffnn_multivariate(df, parent_folder, series_name, output_variable, L, ffnn_n
     ##CREATE TABLE##
     from prettytable import PrettyTable
     from pathlib import Path
-    def performance_table(df, list, path_name, name=''):
+    def performance_table(list, path_name, name=''):
         """Create Table Comparing Different Model Performances for each metric"""
         table = PrettyTable()
         table.title = name+' Model Performance on '+series_name+' Series'
@@ -648,16 +661,24 @@ def ffnn_multivariate(df, parent_folder, series_name, output_variable, L, ffnn_n
         Path(f"{path_name}/"+name+" Model Performance Metrics ("+series_name+" Series).txt").write_text(str(table))
         print(table)
         return table
-    ffnn_table_train=performance_table(df, ffnn_metrics_train,  path_name=multivariate_tables, name='FFNN - In-Sample')
-    ffnn_table_test=performance_table(df, ffnn_metrics_test,  path_name=multivariate_tables, name='FFNN - Out-of-Sample')
+    performance_table(ffnn_metrics_train,  path_name=multivariate_tables, name='FFNN - In-Sample')
+    performance_table(ffnn_metrics_test,  path_name=multivariate_tables, name='FFNN - Out-of-Sample')
     ##REMOVE OBSERVATIONS FROM LOOK BACK WINDOW##
     df_train_for_plotting=df_train.iloc[L:,:]
     df_test_for_plotting=df_test.iloc[L:,:]
     ffnn_train_predict_inv_dataframe=pd.DataFrame(ffnn_train_predict_inv, index=df_train_for_plotting.index)
     ffnn_test_predict_inv_dataframe=pd.DataFrame(ffnn_test_predict_inv, index=df_test_for_plotting.index)
+    ##FORECAST ERROR##
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    ffnn_error_train = forecast_error(df_train_for_plotting[output_variable],ffnn_train_predict_inv_dataframe)
+    ffnn_error_test = forecast_error(df_test_for_plotting[output_variable], ffnn_test_predict_inv_dataframe)
     ##PLOT PERFORMANCE##
     from matplotlib.ticker import MaxNLocator
-    def plot_performance(df, actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
+    def plot_performance(actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
         """Plot Model performance choosing how many plots to create and save figures to specified path"""
         test_list=numpy.array_split(actual, splits)
         pred_list=numpy.array_split(predicted, splits)
@@ -676,11 +697,11 @@ def ffnn_multivariate(df, parent_folder, series_name, output_variable, L, ffnn_n
             plt.savefig(f"{path_name}/"+model_name+" Model - Actual vs. Predicted Values ("+output_variable+") "+str(test.index[0])+" - "+str(test.index[-1])+".png", format="png")
             plt.close()
     ##PLOTS (FULL)##
-    plot_performance(df, df_train_for_plotting[output_variable], ffnn_train_predict_inv_dataframe, 1, path_name=multivariate_ffnn, model_name='FFNN - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], ffnn_test_predict_inv_dataframe, 1, path_name=multivariate_ffnn, model_name='FFNN - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], ffnn_train_predict_inv_dataframe, 1, path_name=multivariate_ffnn, model_name='FFNN - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], ffnn_test_predict_inv_dataframe, 1, path_name=multivariate_ffnn, model_name='FFNN - Out-of-Sample', label="Test", color='orangered')
     ##PLOTS (DETAILS##
-    plot_performance(df, df_train_for_plotting[output_variable], ffnn_train_predict_inv_dataframe, 5, path_name=multivariate_ffnn, model_name='FFNN - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], ffnn_test_predict_inv_dataframe, 5, path_name=multivariate_ffnn, model_name='FFNN - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], ffnn_train_predict_inv_dataframe, 5, path_name=multivariate_ffnn, model_name='FFNN - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], ffnn_test_predict_inv_dataframe, 5, path_name=multivariate_ffnn, model_name='FFNN - Out-of-Sample', label="Test", color='orangered')
     ##SCATTER PLOT PREDICTED VS. ACTUAL VALUES##
     def scatter_plot(actual, pred, path_name, model_name=''):
         fig=plt.figure()
@@ -700,7 +721,7 @@ def ffnn_multivariate(df, parent_folder, series_name, output_variable, L, ffnn_n
     scatter_plot(df_test_for_plotting[output_variable], ffnn_test_predict_inv_dataframe, model_name='FFNN (Layers='+str(len(ffnn_model.layers))+') Out-of-Sample', path_name=multivariate_ffnn)
     plt.close('all')
     ffnn_layers=len(ffnn_model.layers)
-    return multivariate_ffnn_training_time, ffnn_metrics_train, ffnn_metrics_test, ffnn_layers
+    return multivariate_ffnn_training_time, ffnn_metrics_train, ffnn_metrics_test, ffnn_layers, ffnn_error_train, ffnn_error_test
 #####################################################################################################################################
 ##RECURRENT NEURAL NETWORK (RNN)##
 def rnn_multivariate(df, parent_folder, series_name, output_variable, L, rnn_nodes1, rnn_nodes2, rnn_epochs, rnn_batch, rnn_optimizer, T=1):
@@ -835,9 +856,9 @@ def rnn_multivariate(df, parent_folder, series_name, output_variable, L, rnn_nod
     rnn_fit=rnn_model.fit(X_train, train_y, epochs=rnn_epochs, batch_size=rnn_batch, validation_split=0.2, verbose=2, callbacks=[rnn_best_model])
     multivariate_rnn_training_time=time()-start
     ##EVALUATE FIT DURING TRAINING##
-    def loss_plot(df, model,  path_name, name, output_variable=output_variable):
+    def loss_plot(model, path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Loss against Validation Loss and save figure to specified path"""
-        fig=plt.figure()
+        plt.figure()
         plt.plot(model.history['loss'], label='Training loss')
         plt.plot(model.history['val_loss'], label='Validation loss')
         plt.title(name+' Training Loss vs. Validation Loss ('+output_variable+' Series)')
@@ -845,11 +866,11 @@ def rnn_multivariate(df, parent_folder, series_name, output_variable, L, rnn_nod
         plt.ylabel('MSE Loss')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training Loss vs. Validation Loss ("+output_variable+" Series).png", format="png")
-    loss_plot(df, rnn_fit, path_name=multivariate_rnn, name="Simple RNN")
+    loss_plot(rnn_fit, path_name=multivariate_rnn, name="Simple RNN")
     ##EVALUATE TRAINING AND VALIDATION MAE##
-    def mae_plot(df, model, path_name, name, output_variable=output_variable):
+    def mae_plot(model, path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Mean Absolute Error (MAE) against Validation and save figure to specified path"""
-        fig=plt.figure()
+        plt.figure()
         plt.plot(model.history['mae'], label='Training MAE')
         plt.plot(model.history['val_mae'], label='Validation MAE')
         plt.xlabel('Epochs')
@@ -857,7 +878,7 @@ def rnn_multivariate(df, parent_folder, series_name, output_variable, L, rnn_nod
         plt.title(name+' Training MAE vs. Validation MAE')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training MAE vs. Validation MAE ("+output_variable+" Series).png", format="png")
-    mae_plot(df, rnn_fit, path_name=multivariate_rnn, name='Simple RNN')
+    mae_plot(rnn_fit, path_name=multivariate_rnn, name='Simple RNN')
     ##LOAD BEST MODEL##
     rnn_best_model=load_model(f"{multivariate_models}/rnn_best_model.h5")
     ##SAVE MODEL SUMMARY##
@@ -895,7 +916,7 @@ def rnn_multivariate(df, parent_folder, series_name, output_variable, L, rnn_nod
     ##CREATE TABLE##
     from prettytable import PrettyTable
     from pathlib import Path
-    def performance_table(df, list, path_name, name=''):
+    def performance_table(list, path_name, name=''):
         """Create Table Comparing Different Model Performances for each metric"""
         table = PrettyTable()
         table.title = name+' Model Performance on '+series_name+' Series'
@@ -905,16 +926,23 @@ def rnn_multivariate(df, parent_folder, series_name, output_variable, L, rnn_nod
         Path(f"{path_name}/"+name+" Model Performance Metrics ("+series_name+" Series).txt").write_text(str(table))
         print(table)
         return table
-    rnn_table_train=performance_table(df, rnn_metrics_train,  path_name=multivariate_tables, name='RNN - In-Sample')
-    rnn_table_test=performance_table(df, rnn_metrics_test,  path_name=multivariate_tables, name='RNN - Out-of-Sample')
+    performance_table(rnn_metrics_train,  path_name=multivariate_tables, name='RNN - In-Sample')
+    performance_table(rnn_metrics_test,  path_name=multivariate_tables, name='RNN - Out-of-Sample')
     ##PLOTTING DATAFRAME##
     df_train_for_plotting=df_train.iloc[L:,:]
     df_test_for_plotting=df_test.iloc[L:,:]
     rnn_train_predict_inv_dataframe=pd.DataFrame(rnn_train_predict_inv, index=df_train_for_plotting.index)
     rnn_test_predict_inv_dataframe=pd.DataFrame(rnn_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    rnn_error_train = forecast_error(df_train_for_plotting[output_variable],rnn_train_predict_inv_dataframe)
+    rnn_error_test = forecast_error(df_test_for_plotting[output_variable], rnn_test_predict_inv_dataframe)
     ##PLOT PERFORMANCE##
     from matplotlib.ticker import MaxNLocator
-    def plot_performance(df, actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
+    def plot_performance(actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
         """Plot Model performance choosing how many plots to create and save figures to specified path"""
         test_list=numpy.array_split(actual, splits)
         pred_list=numpy.array_split(predicted, splits)
@@ -933,11 +961,11 @@ def rnn_multivariate(df, parent_folder, series_name, output_variable, L, rnn_nod
             plt.savefig(f"{path_name}/"+model_name+" Model - Actual vs. Predicted Values ("+output_variable+") "+str(test.index[0])+" - "+str(test.index[-1])+".png", format="png")
             plt.close()
     ##PLOTS (FULL)##
-    plot_performance(df, df_train_for_plotting[output_variable], rnn_train_predict_inv_dataframe, 1, path_name=multivariate_rnn, model_name='RNN - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], rnn_test_predict_inv_dataframe, 1, path_name=multivariate_rnn, model_name='RNN - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], rnn_train_predict_inv_dataframe, 1, path_name=multivariate_rnn, model_name='RNN - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], rnn_test_predict_inv_dataframe, 1, path_name=multivariate_rnn, model_name='RNN - Out-of-Sample', label="Test", color='orangered')
     ##PLOTS (DETAILS)##
-    plot_performance(df, df_train_for_plotting[output_variable], rnn_train_predict_inv_dataframe, 5, path_name=multivariate_rnn, model_name='RNN - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], rnn_test_predict_inv_dataframe, 5, path_name=multivariate_rnn, model_name='RNN - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], rnn_train_predict_inv_dataframe, 5, path_name=multivariate_rnn, model_name='RNN - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], rnn_test_predict_inv_dataframe, 5, path_name=multivariate_rnn, model_name='RNN - Out-of-Sample', label="Test", color='orangered')
     ##SCATTER PLOT PREDICTED VS. ACTUAL VALUES##
     def scatter_plot(actual, pred, path_name, model_name=''):
         fig=plt.figure()
@@ -957,7 +985,7 @@ def rnn_multivariate(df, parent_folder, series_name, output_variable, L, rnn_nod
     scatter_plot(df_test_for_plotting[output_variable], rnn_test_predict_inv_dataframe, model_name='RNN (Layers='+str(len(rnn_model.layers))+') Out-of-Sample', path_name=multivariate_rnn)
     plt.close('all')
     rnn_layers = len(rnn_model.layers)
-    return multivariate_rnn_training_time, rnn_metrics_train, rnn_metrics_test, rnn_layers
+    return multivariate_rnn_training_time, rnn_metrics_train, rnn_metrics_test, rnn_layers, rnn_error_train, rnn_error_test
 #####################################################################################################################################
 ##LONG SHORT-TERM MEMORY (LSTM)##
 def lstm_multivariate(df, parent_folder, series_name, output_variable, L, lstm_nodes1, lstm_nodes2, lstm_epochs, lstm_batch, lstm_optimizer, T=1):
@@ -1091,9 +1119,9 @@ def lstm_multivariate(df, parent_folder, series_name, output_variable, L, lstm_n
     lstm_fit=lstm_model.fit(X_train, train_y, epochs=lstm_epochs, batch_size=lstm_batch, validation_split=0.2, verbose=2, callbacks=[lstm_best_model])
     multivariate_lstm_training_time=time()-start
     ##EVALUATE FIT##
-    def loss_plot(df, model,  path_name, name, output_variable=output_variable):
+    def loss_plot(model,  path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Loss against Validation Loss and save figure to specified path"""
-        fig=plt.figure()
+        plt.figure()
         plt.plot(model.history['loss'], label='Training loss')
         plt.plot(model.history['val_loss'], label='Validation loss')
         plt.title(name+' Training Loss vs. Validation Loss ('+output_variable+' Series)')
@@ -1101,11 +1129,11 @@ def lstm_multivariate(df, parent_folder, series_name, output_variable, L, lstm_n
         plt.ylabel('MSE Loss')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training Loss vs. Validation Loss ("+output_variable+" Series).png", format="png")
-    lstm_loss_plot_multivariate=loss_plot(df, lstm_fit, path_name=multivariate_lstm, name="LSTM")
+    loss_plot(lstm_fit, path_name=multivariate_lstm, name="LSTM")
     ##EVALUATE TRAINING AND VALIDATION MAE##
-    def mae_plot(df, model, path_name, name, output_variable=output_variable):
+    def mae_plot(model, path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Mean Absolute Error (MAE) against Validation and save figure to specified path"""
-        fig=plt.figure()
+        plt.figure()
         plt.plot(model.history['mae'], label='Training MAE')
         plt.plot(model.history['val_mae'], label='Validation MAE')
         plt.xlabel('Epochs')
@@ -1113,7 +1141,7 @@ def lstm_multivariate(df, parent_folder, series_name, output_variable, L, lstm_n
         plt.title(name+' Training MAE vs. Validation MAE')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training MAE vs. Validation MAE ("+output_variable+" Series).png", format="png")
-    lstm_mae_plot_multivariate=mae_plot(df, lstm_fit, path_name=multivariate_lstm, name='LSTM')
+    mae_plot(lstm_fit, path_name=multivariate_lstm, name='LSTM')
     ##LOAD BEST MODEL##
     lstm_best_model=load_model(f"{multivariate_models}/lstm_best_model.h5")
     ##SAVE MODEL SUMMARY##
@@ -1151,7 +1179,7 @@ def lstm_multivariate(df, parent_folder, series_name, output_variable, L, lstm_n
     ##CREATE TABLES##
     from prettytable import PrettyTable
     from pathlib import Path
-    def performance_table(df, list, path_name, name=''):
+    def performance_table(list, path_name, name=''):
         """Create Table Comparing Different Model Performances for each metric"""
         table = PrettyTable()
         table.title = name+' Model Performance on '+series_name+' Series'
@@ -1161,16 +1189,23 @@ def lstm_multivariate(df, parent_folder, series_name, output_variable, L, lstm_n
         Path(f"{path_name}/"+name+" Model Performance Metrics ("+series_name+" Series).txt").write_text(str(table))
         print(table)
         return table
-    lstm_table_train=performance_table(df, lstm_metrics_train,  path_name=multivariate_tables, name='LSTM - In-Sample')
-    lstm_table_test=performance_table(df, lstm_metrics_test,  path_name=multivariate_tables, name='LSTM - Out-of-Sample')
+    performance_table(lstm_metrics_train,  path_name=multivariate_tables, name='LSTM - In-Sample')
+    performance_table(lstm_metrics_test,  path_name=multivariate_tables, name='LSTM - Out-of-Sample')
     ##PLOTTING DATAFRAME##
     df_train_for_plotting=df_train.iloc[L:,:]
     df_test_for_plotting=df_test.iloc[L:,:]
     lstm_train_predict_inv_dataframe=pd.DataFrame(lstm_train_predict_inv, index=df_train_for_plotting.index)
     lstm_test_predict_inv_dataframe=pd.DataFrame(lstm_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    lstm_error_train = forecast_error(df_train_for_plotting[output_variable],lstm_train_predict_inv_dataframe)
+    lstm_error_test = forecast_error(df_test_for_plotting[output_variable], lstm_test_predict_inv_dataframe)
     ##PLOT PERFORMANCE##
     from matplotlib.ticker import MaxNLocator
-    def plot_performance(df, actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
+    def plot_performance(actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
         """Plot Model performance choosing how many plots to create and save figures to specified path"""
         test_list=numpy.array_split(actual, splits)
         pred_list=numpy.array_split(predicted, splits)
@@ -1189,11 +1224,11 @@ def lstm_multivariate(df, parent_folder, series_name, output_variable, L, lstm_n
             plt.savefig(f"{path_name}/"+model_name+" Model - Actual vs. Predicted Values ("+output_variable+") "+str(test.index[0])+" - "+str(test.index[-1])+".png", format="png")
             plt.close()
     ##PLOTS (FULL)##
-    plot_performance(df, df_train_for_plotting[output_variable], lstm_train_predict_inv_dataframe, 1, path_name=multivariate_lstm, model_name='LSTM - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], lstm_test_predict_inv_dataframe, 1, path_name=multivariate_lstm, model_name='LSTM - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], lstm_train_predict_inv_dataframe, 1, path_name=multivariate_lstm, model_name='LSTM - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], lstm_test_predict_inv_dataframe, 1, path_name=multivariate_lstm, model_name='LSTM - Out-of-Sample', label="Test", color='orangered')
     ##PLOTS (DETAILS)##
-    plot_performance(df, df_train_for_plotting[output_variable], lstm_train_predict_inv_dataframe, 5, path_name=multivariate_lstm, model_name='LSTM - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], lstm_test_predict_inv_dataframe, 5, path_name=multivariate_lstm, model_name='LSTM - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], lstm_train_predict_inv_dataframe, 5, path_name=multivariate_lstm, model_name='LSTM - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], lstm_test_predict_inv_dataframe, 5, path_name=multivariate_lstm, model_name='LSTM - Out-of-Sample', label="Test", color='orangered')
     ##SCATTER PLOT PREDICTED VS. ACTUAL VALUES##
     def scatter_plot(actual, pred, path_name, model_name=''):
         fig=plt.figure()
@@ -1213,7 +1248,7 @@ def lstm_multivariate(df, parent_folder, series_name, output_variable, L, lstm_n
     scatter_plot(df_test_for_plotting[output_variable], lstm_test_predict_inv_dataframe, model_name='LSTM (Layers='+str(len(lstm_model.layers))+') Out-of-Sample', path_name=multivariate_lstm)
     plt.close('all')
     lstm_layers = len(lstm_model.layers)
-    return multivariate_lstm_training_time, lstm_metrics_train, lstm_metrics_test, lstm_layers
+    return multivariate_lstm_training_time, lstm_metrics_train, lstm_metrics_test, lstm_layers, lstm_error_train, lstm_error_test
 #####################################################################################################################################
 ##GATED RECURRENT UNIT (GRU)##
 def gru_multivariate(df, parent_folder, series_name, output_variable, L, gru_nodes1, gru_nodes2, gru_epochs, gru_batch, gru_optimizer, T=1):
@@ -1347,9 +1382,9 @@ def gru_multivariate(df, parent_folder, series_name, output_variable, L, gru_nod
     gru_fit=gru_model.fit(X_train, train_y, epochs=gru_epochs, batch_size=gru_batch, validation_split=0.2, verbose=2, callbacks=[gru_best_model])
     multivariate_gru_training_time=time()-start
     ##EVALUATE FIT##
-    def loss_plot(df, model,  path_name, name, output_variable=output_variable):
+    def loss_plot(model,  path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Loss against Validation Loss and save figure to specified path"""
-        fig=plt.figure()
+        plt.figure()
         plt.plot(model.history['loss'], label='Training loss')
         plt.plot(model.history['val_loss'], label='Validation loss')
         plt.title(name+' Training Loss vs. Validation Loss ('+output_variable+' Series)')
@@ -1357,11 +1392,11 @@ def gru_multivariate(df, parent_folder, series_name, output_variable, L, gru_nod
         plt.ylabel('MSE Loss')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training Loss vs. Validation Loss ("+output_variable+" Series).png", format="png")
-    gru_loss_plot_multivariate=loss_plot(df, gru_fit, path_name=multivariate_gru, name="GRU")
+    loss_plot(gru_fit, path_name=multivariate_gru, name="GRU")
     ##EVALUATE TRAINING AND VALIDATION MAE##
-    def mae_plot(df, model, path_name, name, output_variable=output_variable):
+    def mae_plot(model, path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Mean Absolute Error (MAE) against Validation and save figure to specified path"""
-        fig=plt.figure()
+        plt.figure()
         plt.plot(model.history['mae'], label='Training MAE')
         plt.plot(model.history['val_mae'], label='Validation MAE')
         plt.xlabel('Epochs')
@@ -1369,7 +1404,7 @@ def gru_multivariate(df, parent_folder, series_name, output_variable, L, gru_nod
         plt.title(name+' Training MAE vs. Validation MAE')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training MAE vs. Validation MAE ("+output_variable+" Series).png", format="png")
-    gru_mae_plot_multivariate=mae_plot(df, gru_fit, path_name=multivariate_gru, name='GRU')
+    mae_plot(gru_fit, path_name=multivariate_gru, name='GRU')
     ##LOAD BEST MODEL##
     gru_best_model=load_model(f"{multivariate_models}/gru_best_model.h5")
     ##SAVE MODEL SUMMARY##
@@ -1407,7 +1442,7 @@ def gru_multivariate(df, parent_folder, series_name, output_variable, L, gru_nod
     ##CREATE TABLES##
     from prettytable import PrettyTable
     from pathlib import Path
-    def performance_table(df, list, path_name, name=''):
+    def performance_table(list, path_name, name=''):
         """Create Table Comparing Different Model Performances for each metric"""
         table = PrettyTable()
         table.title = name+' Model Performance on '+series_name+' Series'
@@ -1417,16 +1452,23 @@ def gru_multivariate(df, parent_folder, series_name, output_variable, L, gru_nod
         Path(f"{path_name}/"+name+" Model Performance Metrics ("+series_name+" Series).txt").write_text(str(table))
         print(table)
         return table
-    gru_table_train=performance_table(df, gru_metrics_train, path_name=multivariate_tables, name='GRU - In-Sample')
-    gru_table_test=performance_table(df, gru_metrics_test, path_name=multivariate_tables, name='GRU - Out-of-Sample')
+    performance_table(gru_metrics_train, path_name=multivariate_tables, name='GRU - In-Sample')
+    performance_table(gru_metrics_test, path_name=multivariate_tables, name='GRU - Out-of-Sample')
     ##PLOTTING DATAFRAME##
     df_train_for_plotting=df_train.iloc[L:,:]
     df_test_for_plotting=df_test.iloc[L:,:]
     gru_train_predict_inv_dataframe=pd.DataFrame(gru_train_predict_inv, index=df_train_for_plotting.index)
     gru_test_predict_inv_dataframe=pd.DataFrame(gru_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    gru_error_train = forecast_error(df_train_for_plotting[output_variable],gru_train_predict_inv_dataframe)
+    gru_error_test = forecast_error(df_test_for_plotting[output_variable], gru_test_predict_inv_dataframe)
     ##PLOT PERFORMANCE##
     from matplotlib.ticker import MaxNLocator
-    def plot_performance(df, actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
+    def plot_performance(actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
         """Plot Model performance choosing how many plots to create and save figures to specified path"""
         test_list=numpy.array_split(actual, splits)
         pred_list=numpy.array_split(predicted, splits)
@@ -1445,11 +1487,11 @@ def gru_multivariate(df, parent_folder, series_name, output_variable, L, gru_nod
             plt.savefig(f"{path_name}/"+model_name+" Model - Actual vs. Predicted Values ("+output_variable+") "+str(test.index[0])+" - "+str(test.index[-1])+".png", format="png")
             plt.close()
     ##PLOTS (FULL)##
-    plot_performance(df, df_train_for_plotting[output_variable], gru_train_predict_inv_dataframe, 1, path_name=multivariate_gru, model_name='GRU - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], gru_test_predict_inv_dataframe, 1, path_name=multivariate_gru, model_name='GRU - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], gru_train_predict_inv_dataframe, 1, path_name=multivariate_gru, model_name='GRU - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], gru_test_predict_inv_dataframe, 1, path_name=multivariate_gru, model_name='GRU - Out-of-Sample', label="Test", color='orangered')
     ##PLOTS (DETAILS)##
-    plot_performance(df, df_train_for_plotting[output_variable], gru_train_predict_inv_dataframe, 5, path_name=multivariate_gru, model_name='GRU - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], gru_test_predict_inv_dataframe, 5, path_name=multivariate_gru, model_name='GRU - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], gru_train_predict_inv_dataframe, 5, path_name=multivariate_gru, model_name='GRU - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], gru_test_predict_inv_dataframe, 5, path_name=multivariate_gru, model_name='GRU - Out-of-Sample', label="Test", color='orangered')
     ##SCATTER PLOT PREDICTED VS. ACTUAL VALUES##
     def scatter_plot(actual, pred, path_name, model_name=''):
         fig=plt.figure()
@@ -1469,7 +1511,7 @@ def gru_multivariate(df, parent_folder, series_name, output_variable, L, gru_nod
     scatter_plot(df_test_for_plotting[output_variable], gru_test_predict_inv_dataframe, model_name='GRU (Layers='+str(len(gru_model.layers))+') Out-of-Sample', path_name=multivariate_gru)
     plt.close('all')
     gru_layers = len(gru_model.layers)
-    return multivariate_gru_training_time, gru_metrics_train, gru_metrics_test, gru_layers
+    return multivariate_gru_training_time, gru_metrics_train, gru_metrics_test, gru_layers, gru_error_train, gru_error_test
 #####################################################################################################################################
 ##CONVOLUTIONAL NEURAL NETWORK (CNN)##
 def cnn_multivariate(df, parent_folder, series_name, output_variable, L, cnn_filters_1, cnn_filters_2, cnn_dense_nodes, cnn_epochs, cnn_batch, cnn_optimizer, cnn_kernel_1=3, cnn_kernel_2=3, cnn_pool_size=2, T=1):
@@ -1613,7 +1655,7 @@ def cnn_multivariate(df, parent_folder, series_name, output_variable, L, cnn_fil
     cnn_fit=cnn_model.fit(X_train, train_y, epochs=cnn_epochs, batch_size=cnn_batch, validation_split=0.2, verbose=2, callbacks=[cnn_best_model])
     multivariate_cnn_training_time=time()-start
     ##EVALUATE FIT##
-    def loss_plot(df, model,  path_name, name, output_variable=output_variable):
+    def loss_plot(model,  path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Loss against Validation Loss and save figure to specified path"""
         fig=plt.figure()
         plt.plot(model.history['loss'], label='Training loss')
@@ -1623,9 +1665,9 @@ def cnn_multivariate(df, parent_folder, series_name, output_variable, L, cnn_fil
         plt.ylabel('MSE Loss')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training Loss vs. Validation Loss ("+output_variable+" Series).png", format="png")
-    cnn_loss_plot_multivariate = loss_plot(df, cnn_fit, path_name=multivariate_cnn, name="CNN")
+    loss_plot(cnn_fit, path_name=multivariate_cnn, name="CNN")
     ##EVALUATE TRAINING AND VALIDATION MAE##
-    def mae_plot(df, model, path_name, name, output_variable=output_variable):
+    def mae_plot(model, path_name, name, output_variable=output_variable):
         """Plot Neural Network Training Mean Absolute Error (MAE) against Validation and save figure to specified path"""
         fig=plt.figure()
         plt.plot(model.history['mae'], label='Training MAE')
@@ -1635,7 +1677,7 @@ def cnn_multivariate(df, parent_folder, series_name, output_variable, L, cnn_fil
         plt.title(name+' Training MAE vs. Validation MAE')
         plt.legend(loc='best')
         plt.savefig(f"{path_name}/"+name+" - Training MAE vs. Validation MAE ("+output_variable+" Series).png", format="png")
-    cnn_mae_plot_multivariate = mae_plot(df, cnn_fit, path_name=multivariate_cnn, name='CNN')
+    mae_plot(cnn_fit, path_name=multivariate_cnn, name='CNN')
     ##LOAD BEST MODEL##
     cnn_best_model=load_model(f"{multivariate_models}/cnn_best_model.h5")
     ##SAVE MODEL SUMMARY##
@@ -1683,16 +1725,23 @@ def cnn_multivariate(df, parent_folder, series_name, output_variable, L, cnn_fil
         Path(f"{path_name}/"+name+" Model Performance Metrics ("+series_name+" Series).txt").write_text(str(table))
         print(table)
         return table
-    cnn_table_train=performance_table(df, cnn_metrics_train, path_name=multivariate_tables, name='CNN - In-Sample')
-    cnn_table_test=performance_table(df, cnn_metrics_test, path_name=multivariate_tables, name='CNN - Out-of-Sample')
+    performance_table(df, cnn_metrics_train, path_name=multivariate_tables, name='CNN - In-Sample')
+    performance_table(df, cnn_metrics_test, path_name=multivariate_tables, name='CNN - Out-of-Sample')
     ##PLOTTING DATAFRAME##
     df_train_for_plotting=df_train.iloc[L:,:]
     df_test_for_plotting=df_test.iloc[L:,:]
     cnn_train_predict_inv_dataframe=pd.DataFrame(cnn_train_predict_inv, index=df_train_for_plotting.index)
     cnn_test_predict_inv_dataframe=pd.DataFrame(cnn_test_predict_inv, index=df_test_for_plotting.index)
+    def forecast_error(y_true,y_pred):
+        y_true=y_true.values
+        y_pred=y_pred.values
+        y_error=[y_true[i]-y_pred[i] for i in range(len(y_true))]
+        return y_error
+    cnn_error_train = forecast_error(df_train_for_plotting[output_variable], cnn_train_predict_inv_dataframe)
+    cnn_error_test = forecast_error(df_test_for_plotting[output_variable], cnn_test_predict_inv_dataframe)
     ##PLOT PERFORMANCE##
     from matplotlib.ticker import MaxNLocator
-    def plot_performance(df, actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
+    def plot_performance(actual, predicted, splits, path_name, model_name, label, color, output_variable=output_variable):
         """Plot Model performance choosing how many plots to create and save figures to specified path"""
         test_list=numpy.array_split(actual, splits)
         pred_list=numpy.array_split(predicted, splits)
@@ -1711,11 +1760,11 @@ def cnn_multivariate(df, parent_folder, series_name, output_variable, L, cnn_fil
             plt.savefig(f"{path_name}/"+model_name+" Model - Actual vs. Predicted Values ("+output_variable+") "+str(test.index[0])+" - "+str(test.index[-1])+".png", format="png")
             plt.close()
     ##PLOTS (FULL)##
-    plot_performance(df, df_train_for_plotting[output_variable], cnn_train_predict_inv_dataframe, 1, path_name=multivariate_cnn, model_name='CNN - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], cnn_test_predict_inv_dataframe, 1, path_name=multivariate_cnn, model_name='CNN - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], cnn_train_predict_inv_dataframe, 1, path_name=multivariate_cnn, model_name='CNN - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], cnn_test_predict_inv_dataframe, 1, path_name=multivariate_cnn, model_name='CNN - Out-of-Sample', label="Test", color='orangered')
     ##PLOTS (DETAILS)##
-    plot_performance(df, df_train_for_plotting[output_variable], cnn_train_predict_inv_dataframe, 5, path_name=multivariate_cnn, model_name='CNN - In Sample', label='Training', color='lawngreen')
-    plot_performance(df, df_test_for_plotting[output_variable], cnn_test_predict_inv_dataframe, 5, path_name=multivariate_cnn, model_name='CNN - Out-of-Sample', label="Test", color='orangered')
+    plot_performance(df_train_for_plotting[output_variable], cnn_train_predict_inv_dataframe, 5, path_name=multivariate_cnn, model_name='CNN - In Sample', label='Training', color='lawngreen')
+    plot_performance(df_test_for_plotting[output_variable], cnn_test_predict_inv_dataframe, 5, path_name=multivariate_cnn, model_name='CNN - Out-of-Sample', label="Test", color='orangered')
     ##SCATTER PLOT PREDICTED VS. ACTUAL VALUES##
     def scatter_plot(actual, pred, path_name, model_name=''):
         fig=plt.figure()
@@ -1735,10 +1784,10 @@ def cnn_multivariate(df, parent_folder, series_name, output_variable, L, cnn_fil
     scatter_plot(df_test_for_plotting[output_variable], cnn_test_predict_inv_dataframe, model_name='CNN (Layers='+str(len(cnn_model.layers))+') Out-of-Sample', path_name=multivariate_cnn)
     plt.close('all')
     cnn_layers = len(cnn_model.layers)
-    return multivariate_cnn_training_time, cnn_metrics_train, cnn_metrics_test, cnn_layers
+    return multivariate_cnn_training_time, cnn_metrics_train, cnn_metrics_test, cnn_layers, cnn_error_train, cnn_error_test
 #####################################################################################################################################
 ####################################              CREATE MULTIVARIATE TABLES              ###########################################
-def multivariate_tables(df, multivariate_ffnn_training_time, multivariate_rnn_training_time, multivariate_lstm_training_time, 
+def multivariate_tables(multivariate_ffnn_training_time, multivariate_rnn_training_time, multivariate_lstm_training_time, 
                       multivariate_gru_training_time, multivariate_cnn_training_time,
                       ffnn_metrics_train, rnn_metrics_train, lstm_metrics_train, gru_metrics_train, cnn_metrics_train,
                       ffnn_metrics_test, rnn_metrics_test, lstm_metrics_test, gru_metrics_test, cnn_metrics_test,
@@ -1784,6 +1833,67 @@ def multivariate_tables(df, multivariate_ffnn_training_time, multivariate_rnn_tr
         multivariate_table_test.add_row([performance_metrics[i], ffnn_metrics_test[i],rnn_metrics_test[i],lstm_metrics_test[i],gru_metrics_test[i],cnn_metrics_test[i]])
     Path(f"{multivariate_tables}/Multivariate Out-of-Sample Model Performance.txt").write_text(str(multivariate_table_test))
     print(multivariate_table_test)
+#####################################################################################################################################
+####################################            STATISTICAL SIGNIFICANCE TEST             ###########################################
+def diebold_mariano_test(parent_folder, series_name, L_ffnn,L_rnn,L_lstm,L_gru,L_cnn, arima_error_train, arima_error_test, ffnn_error_train,ffnn_error_test,
+                         rnn_error_train,rnn_error_test,lstm_error_train,lstm_error_test,gru_error_train,gru_error_test,
+                         cnn_error_train,cnn_error_test):
+    import pathlib
+    from dm_test import dm_test
+    project_path = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project'
+    parent_folder = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder
+    series_path = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder / series_name
+    neural_network_folder = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder / series_name / 'Neural Networks'
+    multivariate_folder = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder / series_name / 'Neural Networks/Multivariate'
+    diebold_mariano_test_folder = pathlib.Path.home()/'Desktop/Time_Series_Prediction_Project' / parent_folder / series_name / 'Neural Networks/Multivariate/Diebold-Mariano Test'    
+    list_of_folders=[project_path,parent_folder,series_path,neural_network_folder,multivariate_folder,diebold_mariano_test_folder]
+    for folder in list_of_folders:
+        if not os.path.exists(folder):
+            os.mkdir(folder)
+    from pathlib import Path
+    from matplotlib import pyplot as plt
+    models=['FFNN','RNN', 'LSTM', 'GRU', 'CNN']
+    in_sample_nn=[ffnn_error_train,rnn_error_train,lstm_error_train,gru_error_train,cnn_error_train]
+    out_sample_nn=[ffnn_error_test,rnn_error_test,lstm_error_test,gru_error_test,cnn_error_test]
+    window_size=[L_ffnn,L_rnn,L_lstm,L_gru,L_cnn]
+    ##IN-SAMPLE##
+    in_sample_dm=[]
+    in_sample_pval=[]
+    for nn_pred_in, L in zip(in_sample_nn, window_size):
+        dm_stat, dm_pval = dm_test(arima_error_train[L:],nn_pred_in, h=1)
+        in_sample_dm.append(dm_stat)
+        in_sample_pval.append(dm_pval)
+    with open(f"{diebold_mariano_test_folder}/Diebold-Mariano Test Output (In-Sample).txt", 'w') as f:
+        f.write("Baseline Comparison: ARIMAX Model\n")
+        for model, dm, pval in zip(models, in_sample_dm, in_sample_pval):
+            f.write("%s Model --> Diebold-Mariano Statistic: %f --> p-value: %f\n" % (model, dm, pval))
+    ##PLOT LOSS DIFFERENTIALS##
+    for nn_pred_in, L, model in zip(in_sample_nn, window_size, models):
+        plt.figure()
+        plt.plot(numpy.subtract(arima_error_train[L:],nn_pred_in))
+        plt.title('In-sample Loss Differentials Plots')
+        plt.ylabel('Loss Differential (ARIMA - '+model+')')
+        plt.xlabel('Observation')
+        plt.savefig(f"{diebold_mariano_test_folder}/In-sample Loss Differential Plot (ARIMA - "+model+").png")
+    ##OUT-OF-SAMPLE##
+    out_sample_dm=[]
+    out_sample_pval=[]
+    for nn_pred_out, L in zip(out_sample_nn, window_size):
+        dm_stat, dm_pval = dm_test(arima_error_test[L:],nn_pred_out, h=1)
+        out_sample_dm.append(dm_stat)
+        out_sample_pval.append(dm_pval)
+    with open(f"{diebold_mariano_test_folder}/Diebold-Mariano Test Output (Out-of-Sample).txt", 'w') as f:
+        f.write("Baseline Comparison: ARIMAX Model\n")
+        for model, dm, pval in zip(models, out_sample_dm, out_sample_pval):
+            f.write("%s Model --> Diebold-Mariano Statistic: %f --> p-value: %f\n" % (model, dm, pval))
+    ##PLOT LOSS DIFFERENTIALS##
+    for nn_pred_out, L, model in zip(out_sample_nn, window_size, models):
+        plt.figure()
+        plt.plot(numpy.subtract(arima_error_test[L:],nn_pred_out))
+        plt.title('Out-of-sample Loss Differentials Plots')
+        plt.ylabel('Loss Differential (ARIMA - '+model+')')
+        plt.xlabel('Observation')
+        plt.savefig(f"{diebold_mariano_test_folder}/Out-of-sample Loss Differential Plot (ARIMA - "+model+").png")
 #####################################################################################################################################
 ##################################################   GRID SEARCH FUNCTIONS     ######################################################
 ##FEED FORWARD NEURAL NETWORK##
